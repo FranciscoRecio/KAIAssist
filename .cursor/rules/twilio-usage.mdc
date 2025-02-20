@@ -1,0 +1,8 @@
+---
+description: How Twilio SDK should be used
+globs: 
+---
+
+# Your rule content
+
+- Only use Twilio for accepting the incoming call. Do not use the SDK beyond this use case and find other alternatives such as using OpenAI when possible.

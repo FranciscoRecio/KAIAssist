@@ -1,0 +1,43 @@
+kai_assist/
+├── .env
+├── .gitignore
+├── requirements.txt
+├── README.md
+├── src/
+│   ├── __init__.py
+│   ├── main.py
+│   ├── config/
+│   │   ├── __init__.py
+│   │   └── settings.py
+│   ├── agents/
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── supervisor.py
+│   │   ├── call_handler.py
+│   │   ├── knowledge_base.py
+│   │   ├── ticket_manager.py
+│   │   ├── speech_to_text.py
+│   │   └── text_to_speech.py
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── routes/
+│   │   │   ├── __init__.py
+│   │   │   └── twilio.py
+│   │   └── middleware/
+│   │       ├── __init__.py
+│   │       └── auth.py
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── twilio_service.py
+│   │   ├── kayako_service.py
+│   │   └── openai_service.py
+│   └── utils/
+│       ├── __init__.py
+│       ├── logger.py
+│       └── state_manager.py
+└── tests/
+    ├── __init__.py
+    ├── conftest.py
+    ├── test_agents/
+    ├── test_api/
+    └── test_services/ 
