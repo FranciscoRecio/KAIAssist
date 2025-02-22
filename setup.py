@@ -10,6 +10,7 @@ setup(
         "twilio",
         "python-dotenv",
         "pydantic",
+        "websockets",
     ],
     python_requires=">=3.8",
 ) 
