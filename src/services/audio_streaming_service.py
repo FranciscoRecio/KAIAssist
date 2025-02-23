@@ -126,17 +126,14 @@ class AudioStreamingService:
                             'response.done',
                             'conversation.item.input_audio_transcription.completed'
                         ]
-                        if response.get('type') in important_events:
-                            print(f"Full response: {json.dumps(response, indent=2)}")  # Detailed debug log
+                        # if response.get('type') in important_events:
+                        #     print(f"Full response: {json.dumps(response, indent=2)}")  # Detailed debug log
                         
-                        # Handle assistant transcription (real-time)
-                        if response.get('type') == 'response.audio_transcript.delta':
-                            if 'delta' in response:
-                                print(f"Assistant: {response['delta']}", end='', flush=True)
-                                current_assistant_message += response['delta']
-                            elif response.get('end'):
-                                print()  # New line after complete utterance
-                                current_assistant_message = ""  # Reset for next response
+                        # Handle assistant transcription (complete transcript)
+                        if response.get('type') == 'response.audio_transcript.done':
+                            transcript = response.get('transcript', '')
+                            print(f"Assistant: {transcript}")
+                            current_assistant_message = transcript
 
                         # Handle user transcription (comes after completion)
                         if response.get('type') == 'conversation.item.input_audio_transcription.completed':
