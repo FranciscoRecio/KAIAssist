@@ -6,6 +6,7 @@ import os
 from fastapi import WebSocket
 from dotenv import load_dotenv
 from fastapi import WebSocketDisconnect
+from .conversation_service import ConversationService
 
 class AudioStreamingService:
     def __init__(self):
@@ -15,6 +16,7 @@ class AudioStreamingService:
             "You are a helpful and professional AI assistant. Keep responses concise "
             "and clear, as this is a phone conversation."
         )
+        self.conversation_service = ConversationService()
 
     async def handle_call_stream(self, websocket: WebSocket) -> None:
         """Handle WebSocket connections between Twilio and OpenAI"""
@@ -28,10 +30,6 @@ class AudioStreamingService:
         last_assistant_item = None
         mark_queue = []
         response_start_timestamp_twilio = None
-
-        # Add new state variables for transcripts
-        current_user_message = ""
-        current_assistant_message = ""
 
         async def send_mark():
             """Send a mark event to Twilio"""
@@ -99,11 +97,22 @@ class AudioStreamingService:
                             response_start_timestamp_twilio = None
                             latest_media_timestamp = 0
                             last_assistant_item = None
+                            # Start new conversation
+                            self.conversation_service.start_conversation(stream_sid)
+                        elif data['event'] == 'stop':
+                            print("Call ended.")
+                            if stream_sid:
+                                self.conversation_service.save_conversation(stream_sid)
+                            if openai_ws.open:
+                                await openai_ws.close()
+                            break
                         elif data['event'] == 'mark':
                             if mark_queue:
                                 mark_queue.pop(0)
                 except WebSocketDisconnect:
                     print("Client disconnected.")
+                    if stream_sid:
+                        self.conversation_service.save_conversation(stream_sid)
                     if openai_ws.open:
                         await openai_ws.close()
                 except Exception as e:
@@ -111,39 +120,26 @@ class AudioStreamingService:
 
             async def send_to_twilio():
                 """Handle outgoing audio to Twilio"""
-                nonlocal stream_sid, last_assistant_item, response_start_timestamp_twilio, current_assistant_message
+                nonlocal stream_sid, last_assistant_item, response_start_timestamp_twilio
                 try:
                     async for message in openai_ws:
                         response = json.loads(message)
-                        print(f"Received event type: {response.get('type')}")  # Basic event type log
+                        print(f"Received event type: {response.get('type')}")
                         
-                        # Detailed debug log for specific events
-                        important_events = [
-                            'conversation.item.created',
-                            'response.audio_transcript.done',
-                            'response.content_part.done',
-                            'response.output_item.done',
-                            'response.done',
-                            'conversation.item.input_audio_transcription.completed'
-                        ]
-                        # if response.get('type') in important_events:
-                        #     print(f"Full response: {json.dumps(response, indent=2)}")  # Detailed debug log
-                        
-                        # Handle assistant transcription (complete transcript)
+                        # Handle assistant transcription
                         if response.get('type') == 'response.audio_transcript.done':
                             transcript = response.get('transcript', '')
                             print(f"Assistant: {transcript}")
-                            current_assistant_message = transcript
+                            self.conversation_service.add_message(stream_sid, "assistant", transcript)
 
-                        # Handle user transcription (comes after completion)
+                        # Handle caller transcription
                         if response.get('type') == 'conversation.item.input_audio_transcription.completed':
                             transcript = response.get('transcript', '')
-                            print(f"\nUser: {transcript}")
-                            current_user_message = transcript
+                            print(f"\nCaller: {transcript}")
+                            self.conversation_service.add_message(stream_sid, "caller", transcript)
 
                         # Handle audio response
                         if response.get('type') == 'response.audio.delta' and 'delta' in response:
-                            # Properly handle base64 encoding for audio payload
                             audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
                             await websocket.send_json({
                                 "event": "media",
