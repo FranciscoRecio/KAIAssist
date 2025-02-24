@@ -11,22 +11,22 @@ class KayakoTicketService:
     def create_ticket(self, 
                      subject: str,
                      contents: str,
-                     requester_id: str,
+                     requester_id: int,
                      channel: str = "MAIL",
-                     channel_id: str = "1",
-                     priority_id: str = "3",
-                     type_id: str = "1") -> Optional[Dict]:
+                     channel_id: int = 1,
+                     priority_id: int = 3,
+                     type_id: int = 1) -> Optional[Dict]:
         """
         Create a new ticket in Kayako
         
         Args:
             subject (str): The ticket subject
             contents (str): The ticket description/content
-            requester_id (str): The ID of the person requesting the ticket
+            requester_id (int): The ID of the person requesting the ticket
             channel (str, optional): The channel type. Defaults to "MAIL"
-            channel_id (str, optional): The channel ID. Defaults to "1"
-            priority_id (str, optional): The priority level ID. Defaults to "3"
-            type_id (str, optional): The ticket type ID. Defaults to "1"
+            channel_id (int, optional): The channel ID. Defaults to 1
+            priority_id (int, optional): The priority level ID. Defaults to 3
+            type_id (int, optional): The ticket type ID. Defaults to 1
             
         Returns:
             Dict or None: The created ticket data if successful, None if failed
@@ -81,7 +81,7 @@ class KayakoTicketService:
             conversation_text = "\n".join(formatted_conversation)
             
             # Create a descriptive subject from the first user message
-            user_messages = [msg['content'] for msg in conversation if msg['role'] == 'user']
+            user_messages = [msg['content'] for msg in conversation if msg['role'] == 'caller']
             subject = user_messages[0] if user_messages else "Phone conversation ticket"
             if len(subject) > 50:  # Truncate if too long
                 subject = subject[:47] + "..."
@@ -98,7 +98,11 @@ Conversation:
             return self.create_ticket(
                 subject=subject,
                 contents=contents,
-                requester_id="2",  # Default requester ID
+                requester_id=344,  # Updated to valid requester ID
+                channel="MAIL",
+                channel_id=1,
+                priority_id=3,
+                type_id=1
             )
             
         except Exception as e:
