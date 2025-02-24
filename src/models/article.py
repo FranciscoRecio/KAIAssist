@@ -8,6 +8,7 @@ class Article:
     id: int
     status: str
     helpcenter_url: str
+    updated_at: str
     title: Optional[str] = None
     content: Optional[str] = None
     
@@ -28,6 +29,7 @@ class Article:
             id=data['id'],
             status=data['status'],
             helpcenter_url=data['helpcenter_url'],
+            updated_at=data['updated_at'],
             title=cls._clean_html(title),
             content=cls._clean_html(content)
         ) 
