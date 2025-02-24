@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 from fastapi import WebSocketDisconnect
 from .conversation_service import ConversationService
 from .search_service import KnowledgeBaseSearchService
+from .ticket_service import KayakoTicketService
+from .auth_service import KayakoAuthService
 
 class AudioStreamingService:
     def __init__(self):
@@ -50,10 +52,11 @@ class AudioStreamingService:
         - Keep all responses concise and clear"""
         self.conversation_service = ConversationService()
         self.knowledge_base_service = KnowledgeBaseSearchService()
+        self.caller_number = None
 
-    async def handle_call_stream(self, websocket: WebSocket) -> None:
+    async def handle_call_stream(self, websocket: WebSocket, caller_number: str = None) -> None:
         """Handle WebSocket connections between Twilio and OpenAI"""
-        #print("Client connecting...")
+        self.caller_number = caller_number
         await websocket.accept()
         print("Client connected")
 
@@ -135,6 +138,11 @@ class AudioStreamingService:
                         elif data['event'] == 'stop':
                             print("Call ended.")
                             if stream_sid:
+                                # Get the conversation and create ticket
+                                conversation = self.conversation_service.get_conversation(stream_sid)
+                                if conversation and self.caller_number:
+                                    ticket_service = KayakoTicketService(KayakoAuthService())
+                                    ticket_service.make_ticket(conversation, self.caller_number)
                                 self.conversation_service.save_conversation(stream_sid)
                             if openai_ws.open:
                                 await openai_ws.close()
