@@ -16,17 +16,18 @@ def main():
         query = sys.argv[1] if len(sys.argv) > 1 else "How do I locate an administrator's profile in AdvocateHub?"
         
         print(f"\nSearching for: {query}")
-        results = search_service.search(query)
+        answer, chunks = search_service.get_answer(query)
         
-        print("\nSearch Results:")
-        for i, result in enumerate(results, 1):
-            print(f"\n--- Result {i} (Score: {result['score']:.3f}) ---")
-            print(f"Title: {result['title']}")
-            print(f"URL: {result['url']}")
-            print(f"Article ID: {result['article_id']}")
-            print(f"Chunk Index: {result['chunk_index']}")
-            print("\nContent Preview:")
-            print(result['content'][:300] + "..." if len(result['content']) > 300 else result['content'])
+        print("\nAnswer:")
+        print(answer)
+        
+        print("\nRelevant Chunks Used:")
+        for i, chunk in enumerate(chunks, 1):
+            print(f"\n--- Chunk {i} (Score: {chunk['score']:.3f}) ---")
+            print(f"Title: {chunk['title']}")
+            print(f"URL: {chunk['url']}")
+            print(f"Article ID: {chunk['article_id']}")
+            print(f"Chunk Index: {chunk['chunk_index']}")
             print("-" * 50)
             
     except Exception as e:
