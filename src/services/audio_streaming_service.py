@@ -12,10 +12,7 @@ from .ticket_service import KayakoTicketService
 from .auth_service import KayakoAuthService
 
 class AudioStreamingService:
-    def __init__(self):
-        load_dotenv()
-        self.api_key = os.getenv('OPENAI_API_KEY')
-        self.system_message = """You are a helpful and professional AI assistant for phone conversations. 
+    SYSTEM_MESSAGE = """You are a helpful and professional AI assistant for phone conversations. 
 
         CRITICAL CONVERSATION RULES - YOU MUST FOLLOW THESE EXACTLY:
 
@@ -49,7 +46,12 @@ class AudioStreamingService:
         - Never skip asking "Do you have any other questions?"
         - Never provide information without using search_knowledge_base tool
         - Never continue conversation after using end_call tool
-        - Keep all responses concise and clear"""
+        - Keep all responses concise and clear."""
+
+    def __init__(self):
+        load_dotenv()
+        self.api_key = os.getenv('OPENAI_API_KEY')
+        self.system_message = self.SYSTEM_MESSAGE
         self.conversation_service = ConversationService()
         self.knowledge_base_service = KnowledgeBaseSearchService()
         self.caller_number = None
@@ -339,40 +341,4 @@ class AudioStreamingService:
 
         
         await openai_ws.send(json.dumps(initial_conversation_item))
-        await openai_ws.send(json.dumps({"type": "response.create"}))
-
-        self.system_message = """You are a helpful and professional AI assistant for phone conversations. 
-
-        CRITICAL CONVERSATION RULES - YOU MUST FOLLOW THESE EXACTLY:
-
-        1. INITIAL RESPONSE:
-           - ALWAYS use search_knowledge_base tool first
-           - Provide answer using ONLY the tool's response
-           - IMMEDIATELY follow your answer with "Did that answer your question?"
-           - Wait for caller's response
-
-        2. AFTER CALLER RESPONDS TO "Did that answer your question?":
-           IF CALLER SAYS NO:
-           - Say "I apologize, but I don't have enough information to fully answer your question. I'll have a representative call you back to assist with this. Thank you for calling."
-           - Use end_call tool with reason "insufficient_information"
-           - End conversation
-
-           IF CALLER SAYS YES:
-           - IMMEDIATELY ask "Do you have any other questions I can help you with?"
-           - Wait for caller's response
-
-        3. AFTER CALLER RESPONDS TO "Do you have any other questions?":
-           IF CALLER SAYS NO:
-           - Say "Thank you for calling. Have a great day!"
-           - Use end_call tool with reason "question_answered"
-           - End conversation
-
-           IF CALLER SAYS YES:
-           - Start over from step 1 with their new question
-
-        IMPORTANT:
-        - Never skip asking "Did that answer your question?"
-        - Never skip asking "Do you have any other questions?"
-        - Never provide information without using search_knowledge_base tool
-        - Never continue conversation after using end_call tool
-        - Keep all responses concise and clear.""" 
+        await openai_ws.send(json.dumps({"type": "response.create"})) 
