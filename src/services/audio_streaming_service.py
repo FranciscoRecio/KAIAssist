@@ -10,6 +10,8 @@ from .conversation_service import ConversationService
 from .search_service import KnowledgeBaseSearchService
 from .ticket_service import KayakoTicketService
 from .auth_service import KayakoAuthService
+from .tool_service import ToolService
+from ..models.tool import Tools
 
 class AudioStreamingService:
     SYSTEM_MESSAGE = """You are a helpful and professional AI assistant for phone conversations. 
@@ -53,7 +55,7 @@ class AudioStreamingService:
         self.api_key = os.getenv('OPENAI_API_KEY')
         self.system_message = self.SYSTEM_MESSAGE
         self.conversation_service = ConversationService()
-        self.knowledge_base_service = KnowledgeBaseSearchService()
+        self.tool_service = ToolService()
         self.caller_number = None
 
     async def handle_call_stream(self, websocket: WebSocket, caller_number: str = None) -> None:
@@ -211,53 +213,16 @@ class AudioStreamingService:
 
                         # Handle function calls
                         if response.get('type') == 'response.function_call_arguments.done':
-                            try:
-                                function_name = response.get('name')
-                                function_args = response.get('arguments', '{}')
-                                call_id = response.get('call_id')
-                                
-                                if function_name == 'end_call':
-                                    args = json.loads(function_args)
-                                    print(f"Ending call due to: {args['reason']}")
-                                    # Send final message before ending call
-                                    tool_response = {
-                                        "type": "response.create",
-                                        "response": {
-                                            "instructions": "Thank you for calling. Have a great day!"
-                                        }
-                                    }
-                                    await openai_ws.send(json.dumps(tool_response))
-                                    #await openai_ws.send(json.dumps({"type": "response.create"}))
-                                    
-                                    # Wait a moment for the message to be processed
-                                    await asyncio.sleep(5)
-                                    
-                                    # Then end the call
-                                    await websocket.send_json({
-                                        "event": "stop",
-                                        "streamSid": stream_sid
-                                    })
-                                    if openai_ws.open:
-                                        await openai_ws.close()
-                                    return
-                                
-                                elif function_name == 'search_knowledge_base':
-                                    args = json.loads(function_args)
-                                    kb_response = self.knowledge_base_service.get_kb_answer(args['query'])
-
-                                    tool_response = {
-                                        "type": "response.create",
-                                        "response": {
-                                            "instructions": kb_response
-                                        }
-                                    }
-
-                                    #print("Sending knowledge base response back to OpenAI")
-                                    await openai_ws.send(json.dumps(tool_response))
-                            except Exception as e:
-                                print(f"Error handling function call: {e}")
-                                import traceback
-                                print(traceback.format_exc())
+                            await self.tool_service.handle_function_call(
+                                function_name=response.get('name'),
+                                function_args=response.get('arguments', '{}'),
+                                call_id=response.get('call_id'),
+                                websocket=websocket,
+                                openai_ws=openai_ws,
+                                stream_sid=stream_sid,
+                                conversation_service=self.conversation_service,
+                                caller_number=self.caller_number
+                            )
 
                 except Exception as e:
                     print(f"Error sending to Twilio: {e}")
@@ -283,39 +248,7 @@ class AudioStreamingService:
                 "input_audio_transcription": {
                     "model": "whisper-1"
                 },
-                "tools": [
-                    {
-                        "type": "function",
-                        "name": "search_knowledge_base",
-                        "description": "Search the knowledge base for information to answer user questions",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "The user's question to search for in the knowledge base"
-                                }
-                            },
-                            "required": ["query"]
-                        }
-                    },
-                    {
-                        "type": "function",
-                        "name": "end_call",
-                        "description": "End the current call",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "reason": {
-                                    "type": "string",
-                                    "description": "Reason for ending the call",
-                                    "enum": ["question_answered", "insufficient_information"]
-                                }
-                            },
-                            "required": ["reason"]
-                        }
-                    }
-                ]
+                "tools": Tools.get_all_tools()
             }
         }
         await openai_ws.send(json.dumps(session_config))
