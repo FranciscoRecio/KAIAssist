@@ -8,11 +8,14 @@ router = APIRouter()
 @router.post("/webhook")
 async def handle_incoming_call(request: Request):
     """Handle incoming call and set up media stream"""
+    # Get all form data from the request
+    form_data = await request.form()
+    # Extract the caller's phone number
+    caller_number = form_data.get('From', 'Unknown')
+    print(f"\nCall received from: 1234{caller_number}65")
+    
     response = VoiceResponse()
     response.say("Thank you for calling Kayako. Please wait while I connect you to an agent.")
-    
-    #print(f"URL hostname: {request.url.hostname}")
-    #print(f"Header host: {request.headers.get('host')}")
     
     # Get the host from the request headers (this will be the ngrok URL)
     host = request.headers.get('host', '')
@@ -21,7 +24,6 @@ async def handle_incoming_call(request: Request):
     
     # Set up the media stream with the full path
     websocket_url = f'{host}/api/twilio/media-stream'
-    #print(f"WebSocket URL: {websocket_url}")
     
     connect = Connect()
     connect.stream(url=websocket_url)
