@@ -20,18 +20,10 @@ def main():
         
         print(f"\nFound {len(articles)} articles:")
         for article in articles:
-            # Extract the English title if available
-            title = "Untitled"
-            for title_obj in article.get('titles', []):
-                if isinstance(title_obj, dict) and title_obj.get('locale') == 'en-us':
-                    title = title_obj.get('translation', 'Untitled')
-                    break
-            
-            print(f"\nID: {article['id']}")
-            print(f"Title: {title}")
-            print(f"Status: {article['status']}")
-            print(f"Created: {article['created_at']}")
-            print(f"URL: {article['helpcenter_url']}")
+            print(f"\nID: {article.id}")
+            print(f"Title: {article.title or 'Untitled'}")
+            print(f"Status: {article.status}")
+            print(f"URL: {article.helpcenter_url}")
             print("-" * 50)
             
     except Exception as e:
