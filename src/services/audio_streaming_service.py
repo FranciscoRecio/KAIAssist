@@ -13,25 +13,47 @@ class AudioStreamingService:
     def __init__(self):
         load_dotenv()
         self.api_key = os.getenv('OPENAI_API_KEY')
-        self.system_message = """You are a helpful and professional AI assistant. 
+        self.system_message = """You are a helpful and professional AI assistant for phone conversations. 
+
+        CRITICAL CONVERSATION RULES - YOU MUST FOLLOW THESE EXACTLY:
+
+        1. INITIAL RESPONSE:
+           - ALWAYS use search_knowledge_base tool first
+           - Provide answer using ONLY the tool's response
+           - IMMEDIATELY follow your answer with "Did that answer your question?"
+           - Wait for caller's response
+
+        2. AFTER CALLER RESPONDS TO "Did that answer your question?":
+           IF CALLER SAYS NO:
+           - Say "I apologize, but I don't have enough information to fully answer your question. I'll have a representative call you back to assist with this. Thank you for calling."
+           - Use end_call tool with reason "insufficient_information"
+           - End conversation
+
+           IF CALLER SAYS YES:
+           - IMMEDIATELY ask "Do you have any other questions I can help you with?"
+           - Wait for caller's response
+
+        3. AFTER CALLER RESPONDS TO "Do you have any other questions?":
+           IF CALLER SAYS NO:
+           - Say "Thank you for calling. Have a great day!"
+           - Use end_call tool with reason "question_answered"
+           - End conversation
+
+           IF CALLER SAYS YES:
+           - Start over from step 1 with their new question
 
         IMPORTANT:
-        - ALWAYS use the search_knowledge_base tool for EVERY question
-        - Only use information from the tool's response to answer questions
-        - Keep responses concise and clear, as this is a phone conversation
-        - If the tool's response doesn't contain enough information to answer fully, say "I apologize, but I don't have enough information to fully answer your question. I'll have a representative call you back to assist with this."
-        - Do not make assumptions or add information beyond what's in the tool's response
-        - Never answer without first using the search_knowledge_base tool
-
-        Your primary role is to search our knowledge base using the search_knowledge_base tool and provide answers based solely on the information it returns.
-
-        CRITICAL: You MUST use the search_knowledge_base tool BEFORE providing ANY response to the user. Do not engage in conversation or provide any information without first searching the knowledge base."""
+        - Never skip asking "Did that answer your question?"
+        - Never skip asking "Do you have any other questions?"
+        - Never provide information without using search_knowledge_base tool
+        - Never continue conversation after using end_call tool
+        - Keep all responses concise and clear"""
         self.conversation_service = ConversationService()
         self.knowledge_base_service = KnowledgeBaseSearchService()
 
     async def handle_call_stream(self, websocket: WebSocket) -> None:
         """Handle WebSocket connections between Twilio and OpenAI"""
-        print("Client connecting...")
+        #print("Client connecting...")
         await websocket.accept()
         print("Client connected")
 
@@ -56,12 +78,12 @@ class AudioStreamingService:
         async def handle_speech_started_event():
             """Handle interruption when the caller's speech starts."""
             nonlocal response_start_timestamp_twilio, last_assistant_item
-            print("Handling speech started event.")
+            #print("Handling speech started event.")
             if mark_queue and response_start_timestamp_twilio is not None:
                 elapsed_time = latest_media_timestamp - response_start_timestamp_twilio
 
                 if last_assistant_item:
-                    print(f"Truncating item with ID: {last_assistant_item}, Truncated at: {elapsed_time}ms")
+                    #print(f"Truncating item with ID: {last_assistant_item}, Truncated at: {elapsed_time}ms")
                     truncate_event = {
                         "type": "conversation.item.truncate",
                         "item_id": last_assistant_item,
@@ -104,7 +126,7 @@ class AudioStreamingService:
                             await openai_ws.send(json.dumps(audio_data))
                         elif data['event'] == 'start':
                             stream_sid = data['start']['streamSid']
-                            print(f"Incoming stream has started {stream_sid}")
+                            #print(f"Incoming stream has started {stream_sid}")
                             response_start_timestamp_twilio = None
                             latest_media_timestamp = 0
                             last_assistant_item = None
@@ -135,35 +157,9 @@ class AudioStreamingService:
                 try:
                     async for message in openai_ws:
                         response = json.loads(message)
-                        print(f"Received event type: {response.get('type')}")
+                        #print(f"Received event type: {response.get('type')}")
                         if response.get('type') == 'error':
                             print(f"Error details: {json.dumps(response, indent=2)}")
-                        
-                        # Handle tool calls
-                        if response.get('type') == 'tool_calls':
-                            print("\nReceived tool call from OpenAI")
-                            for tool_call in response.get('tool_calls', []):
-                                print(f"Tool called: {tool_call.get('function', {}).get('name')}")
-                                if tool_call.get('function', {}).get('name') == 'search_knowledge_base':
-                                    try:
-                                        args = json.loads(tool_call['function']['arguments'])
-                                        print(f"Tool arguments: {args}")
-                                        
-                                        kb_response = self.knowledge_base_service.get_kb_answer(args['query'])
-                                        print("Got knowledge base response")
-                                        
-                                        # Send tool response back to OpenAI
-                                        tool_response = {
-                                            "type": "tool_output",
-                                            "id": tool_call['id'],
-                                            "output": kb_response
-                                        }
-                                        print(f"Sending tool response back to OpenAI: {tool_call['id']}")
-                                        await openai_ws.send(json.dumps(tool_response))
-                                    except Exception as e:
-                                        print(f"Error in tool call handling: {e}")
-                                        import traceback
-                                        print(traceback.format_exc())
                         
                         # Handle assistant transcription
                         if response.get('type') == 'response.audio_transcript.done':
@@ -198,27 +194,44 @@ class AudioStreamingService:
 
                         # Handle interruption when speech is detected
                         if response.get('type') == 'input_audio_buffer.speech_started':
-                            print("Speech started detected.")
+                            #print("Speech started detected.")
                             if last_assistant_item:
-                                print(f"Interrupting response with id: {last_assistant_item}")
+                                #print(f"Interrupting response with id: {last_assistant_item}")
                                 await handle_speech_started_event()
 
                         # Handle function calls
-                        if response.get('type') == 'response.function_call_arguments.delta':
-                            print("\nReceived function call delta from OpenAI")
-                            print(f"Delta content: {response}")
-                        
                         if response.get('type') == 'response.function_call_arguments.done':
-                            print("\nFunction call arguments complete")
                             try:
-                                # Get the complete function call
                                 function_name = response.get('name')
                                 function_args = response.get('arguments', '{}')
                                 call_id = response.get('call_id')
-                                print(f"Function called: {function_name}")
-                                print(f"Arguments: {function_args}")
                                 
-                                if function_name == 'search_knowledge_base':
+                                if function_name == 'end_call':
+                                    args = json.loads(function_args)
+                                    print(f"Ending call due to: {args['reason']}")
+                                    # Send final message before ending call
+                                    tool_response = {
+                                        "type": "response.create",
+                                        "response": {
+                                            "instructions": "Thank you for calling. Have a great day!"
+                                        }
+                                    }
+                                    await openai_ws.send(json.dumps(tool_response))
+                                    #await openai_ws.send(json.dumps({"type": "response.create"}))
+                                    
+                                    # Wait a moment for the message to be processed
+                                    await asyncio.sleep(5)
+                                    
+                                    # Then end the call
+                                    await websocket.send_json({
+                                        "event": "stop",
+                                        "streamSid": stream_sid
+                                    })
+                                    if openai_ws.open:
+                                        await openai_ws.close()
+                                    return
+                                
+                                elif function_name == 'search_knowledge_base':
                                     args = json.loads(function_args)
                                     kb_response = self.knowledge_base_service.get_kb_answer(args['query'])
 
@@ -229,7 +242,7 @@ class AudioStreamingService:
                                         }
                                     }
 
-                                    print("Sending knowledge base response back to OpenAI")
+                                    #print("Sending knowledge base response back to OpenAI")
                                     await openai_ws.send(json.dumps(tool_response))
                             except Exception as e:
                                 print(f"Error handling function call: {e}")
@@ -275,9 +288,83 @@ class AudioStreamingService:
                             },
                             "required": ["query"]
                         }
+                    },
+                    {
+                        "type": "function",
+                        "name": "end_call",
+                        "description": "End the current call",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "reason": {
+                                    "type": "string",
+                                    "description": "Reason for ending the call",
+                                    "enum": ["question_answered", "insufficient_information"]
+                                }
+                            },
+                            "required": ["reason"]
+                        }
                     }
                 ]
             }
         }
-        print("Initializing OpenAI session with config:", json.dumps(session_config, indent=2))
-        await openai_ws.send(json.dumps(session_config)) 
+        await openai_ws.send(json.dumps(session_config))
+
+        # Send initial greeting
+        await self._send_initial_conversation_item(openai_ws)
+
+    async def _send_initial_conversation_item(self, openai_ws):
+        """Send initial conversation item if AI talks first."""
+        initial_conversation_item = {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "Greet the user with 'Hi! This is Kai speaking. How can I assist you?'"
+                    }
+                ]
+            }
+        }
+
+        
+        await openai_ws.send(json.dumps(initial_conversation_item))
+        await openai_ws.send(json.dumps({"type": "response.create"}))
+
+        self.system_message = """You are a helpful and professional AI assistant for phone conversations. 
+
+        CRITICAL CONVERSATION RULES - YOU MUST FOLLOW THESE EXACTLY:
+
+        1. INITIAL RESPONSE:
+           - ALWAYS use search_knowledge_base tool first
+           - Provide answer using ONLY the tool's response
+           - IMMEDIATELY follow your answer with "Did that answer your question?"
+           - Wait for caller's response
+
+        2. AFTER CALLER RESPONDS TO "Did that answer your question?":
+           IF CALLER SAYS NO:
+           - Say "I apologize, but I don't have enough information to fully answer your question. I'll have a representative call you back to assist with this. Thank you for calling."
+           - Use end_call tool with reason "insufficient_information"
+           - End conversation
+
+           IF CALLER SAYS YES:
+           - IMMEDIATELY ask "Do you have any other questions I can help you with?"
+           - Wait for caller's response
+
+        3. AFTER CALLER RESPONDS TO "Do you have any other questions?":
+           IF CALLER SAYS NO:
+           - Say "Thank you for calling. Have a great day!"
+           - Use end_call tool with reason "question_answered"
+           - End conversation
+
+           IF CALLER SAYS YES:
+           - Start over from step 1 with their new question
+
+        IMPORTANT:
+        - Never skip asking "Did that answer your question?"
+        - Never skip asking "Do you have any other questions?"
+        - Never provide information without using search_knowledge_base tool
+        - Never continue conversation after using end_call tool
+        - Keep all responses concise and clear.""" 

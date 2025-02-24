@@ -118,22 +118,22 @@ class KnowledgeBaseSearchService:
         Returns:
             str: The relevant content found
         """
-        print(f"\nSearching knowledge base for: {query}")
+        #print(f"\nSearching knowledge base for: {query}")
         
         # Get embeddings and search
-        print("Getting vector embeddings...")
+        #print("Getting vector embeddings...")
         chunks = self.search(query, top_k=3)
         
         if not chunks:
             print("No relevant chunks found")
             return "No relevant information found."
         
-        print(f"Found {len(chunks)} relevant chunks")
+        #print(f"Found {len(chunks)} relevant chunks")
         
         # Format the content with sources
         content = []
         for i, chunk in enumerate(chunks, 1):
-            print(f"Processing chunk {i} from article '{chunk['title']}'")
+            #print(f"Processing chunk {i} from article '{chunk['title']}'")
             content.append(
                 f"From article '{chunk['title']}':\n"
                 f"{chunk['content']}\n"
@@ -141,5 +141,5 @@ class KnowledgeBaseSearchService:
             )
         
         final_content = "\n\n".join(content)
-        print("Finished processing knowledge base response")
+        #print("Finished processing knowledge base response")
         return final_content 
