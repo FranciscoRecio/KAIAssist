@@ -8,6 +8,39 @@ class KayakoArticleService:
         self.auth_service = auth_service
         self.base_url = auth_service.base_url
     
+    def get_locale_field(self, field_id: int) -> Optional[str]:
+        """
+        Fetch a locale field by ID
+        
+        Args:
+            field_id (int): The ID of the locale field to fetch
+            
+        Returns:
+            String content of the field or None if not found
+        """
+        url = f"{self.base_url}/locale/fields/{field_id}.json"
+        
+        try:
+            response = requests.get(
+                url,
+                headers=self.auth_service.get_auth_headers()
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if not data.get('data'):
+                return None
+                
+            return data['data'].get('translation')
+            
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+        except Exception as e:
+            print(f"Error fetching locale field {field_id}: {e}")
+            raise
+
     def get_articles(self, offset: int = 0, limit: int = 10) -> List[Article]:
         """
         Fetch articles from Kayako API
@@ -21,7 +54,6 @@ class KayakoArticleService:
         """
         url = f"{self.base_url}/articles.json"
         
-        # Add pagination parameters
         params = {
             'offset': offset,
             'limit': limit
@@ -36,8 +68,21 @@ class KayakoArticleService:
             response.raise_for_status()
             data = response.json()
             
-            return [Article.from_api_response(article_data) 
-                   for article_data in data.get('data', [])]
+            articles = []
+            for article_data in data.get('data', []):
+                # Get title ID and content ID
+                title_id = next((t['id'] for t in article_data.get('titles', []) 
+                               if t.get('resource_type') == 'locale_field'), None)
+                content_id = next((c['id'] for c in article_data.get('contents', [])
+                                 if c.get('resource_type') == 'locale_field'), None)
+                
+                # Fetch actual title and content
+                title = self.get_locale_field(title_id) if title_id else None
+                content = self.get_locale_field(content_id) if content_id else None
+                
+                articles.append(Article.from_api_response(article_data, title, content))
+            
+            return articles
             
         except Exception as e:
             print(f"Error fetching articles: {e}")
@@ -91,8 +136,20 @@ class KayakoArticleService:
             
             if not data.get('data'):
                 return None
-                
-            return Article.from_api_response(data['data'])
+            
+            article_data = data['data']
+            
+            # Get title ID and content ID
+            title_id = next((t['id'] for t in article_data.get('titles', []) 
+                           if t.get('resource_type') == 'locale_field'), None)
+            content_id = next((c['id'] for c in article_data.get('contents', [])
+                             if c.get('resource_type') == 'locale_field'), None)
+            
+            # Fetch actual title and content
+            title = self.get_locale_field(title_id) if title_id else None
+            content = self.get_locale_field(content_id) if content_id else None
+            
+            return Article.from_api_response(article_data, title, content)
             
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:

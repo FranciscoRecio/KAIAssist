@@ -24,6 +24,7 @@ def main():
             print(f"Title: {article.title or 'Untitled'}")
             print(f"Status: {article.status}")
             print(f"URL: {article.helpcenter_url}")
+            print(f"Content: {'Present' if article.content else 'Empty'}")
             print("-" * 50)
             
     except Exception as e:
