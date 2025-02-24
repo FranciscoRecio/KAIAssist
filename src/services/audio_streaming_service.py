@@ -7,16 +7,27 @@ from fastapi import WebSocket
 from dotenv import load_dotenv
 from fastapi import WebSocketDisconnect
 from .conversation_service import ConversationService
+from .search_service import KnowledgeBaseSearchService
 
 class AudioStreamingService:
     def __init__(self):
         load_dotenv()
         self.api_key = os.getenv('OPENAI_API_KEY')
-        self.system_message = (
-            "You are a helpful and professional AI assistant. Keep responses concise "
-            "and clear, as this is a phone conversation."
-        )
+        self.system_message = """You are a helpful and professional AI assistant. 
+
+        IMPORTANT:
+        - ALWAYS use the search_knowledge_base tool for EVERY question
+        - Only use information from the tool's response to answer questions
+        - Keep responses concise and clear, as this is a phone conversation
+        - If the tool's response doesn't contain enough information to answer fully, say "I apologize, but I don't have enough information to fully answer your question. I'll have a representative call you back to assist with this."
+        - Do not make assumptions or add information beyond what's in the tool's response
+        - Never answer without first using the search_knowledge_base tool
+
+        Your primary role is to search our knowledge base using the search_knowledge_base tool and provide answers based solely on the information it returns.
+
+        CRITICAL: You MUST use the search_knowledge_base tool BEFORE providing ANY response to the user. Do not engage in conversation or provide any information without first searching the knowledge base."""
         self.conversation_service = ConversationService()
+        self.knowledge_base_service = KnowledgeBaseSearchService()
 
     async def handle_call_stream(self, websocket: WebSocket) -> None:
         """Handle WebSocket connections between Twilio and OpenAI"""
@@ -125,6 +136,34 @@ class AudioStreamingService:
                     async for message in openai_ws:
                         response = json.loads(message)
                         print(f"Received event type: {response.get('type')}")
+                        if response.get('type') == 'error':
+                            print(f"Error details: {json.dumps(response, indent=2)}")
+                        
+                        # Handle tool calls
+                        if response.get('type') == 'tool_calls':
+                            print("\nReceived tool call from OpenAI")
+                            for tool_call in response.get('tool_calls', []):
+                                print(f"Tool called: {tool_call.get('function', {}).get('name')}")
+                                if tool_call.get('function', {}).get('name') == 'search_knowledge_base':
+                                    try:
+                                        args = json.loads(tool_call['function']['arguments'])
+                                        print(f"Tool arguments: {args}")
+                                        
+                                        kb_response = self.knowledge_base_service.get_kb_answer(args['query'])
+                                        print("Got knowledge base response")
+                                        
+                                        # Send tool response back to OpenAI
+                                        tool_response = {
+                                            "type": "tool_output",
+                                            "id": tool_call['id'],
+                                            "output": kb_response
+                                        }
+                                        print(f"Sending tool response back to OpenAI: {tool_call['id']}")
+                                        await openai_ws.send(json.dumps(tool_response))
+                                    except Exception as e:
+                                        print(f"Error in tool call handling: {e}")
+                                        import traceback
+                                        print(traceback.format_exc())
                         
                         # Handle assistant transcription
                         if response.get('type') == 'response.audio_transcript.done':
@@ -164,6 +203,39 @@ class AudioStreamingService:
                                 print(f"Interrupting response with id: {last_assistant_item}")
                                 await handle_speech_started_event()
 
+                        # Handle function calls
+                        if response.get('type') == 'response.function_call_arguments.delta':
+                            print("\nReceived function call delta from OpenAI")
+                            print(f"Delta content: {response}")
+                        
+                        if response.get('type') == 'response.function_call_arguments.done':
+                            print("\nFunction call arguments complete")
+                            try:
+                                # Get the complete function call
+                                function_name = response.get('name')
+                                function_args = response.get('arguments', '{}')
+                                call_id = response.get('call_id')
+                                print(f"Function called: {function_name}")
+                                print(f"Arguments: {function_args}")
+                                
+                                if function_name == 'search_knowledge_base':
+                                    args = json.loads(function_args)
+                                    kb_response = self.knowledge_base_service.get_kb_answer(args['query'])
+
+                                    tool_response = {
+                                        "type": "response.create",
+                                        "response": {
+                                            "instructions": kb_response
+                                        }
+                                    }
+
+                                    print("Sending knowledge base response back to OpenAI")
+                                    await openai_ws.send(json.dumps(tool_response))
+                            except Exception as e:
+                                print(f"Error handling function call: {e}")
+                                import traceback
+                                print(traceback.format_exc())
+
                 except Exception as e:
                     print(f"Error sending to Twilio: {e}")
 
@@ -187,8 +259,25 @@ class AudioStreamingService:
                 "temperature": 0.7,
                 "input_audio_transcription": {
                     "model": "whisper-1"
-                }
+                },
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "search_knowledge_base",
+                        "description": "Search the knowledge base for information to answer user questions",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "The user's question to search for in the knowledge base"
+                                }
+                            },
+                            "required": ["query"]
+                        }
+                    }
+                ]
             }
         }
-        print("Initializing OpenAI session with config:", json.dumps(session_config, indent=2))  # Debug log
+        print("Initializing OpenAI session with config:", json.dumps(session_config, indent=2))
         await openai_ws.send(json.dumps(session_config)) 

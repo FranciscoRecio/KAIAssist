@@ -106,3 +106,40 @@ class KnowledgeBaseSearchService:
             answer += sources
         
         return answer, chunks 
+
+    def get_kb_answer(self, query: str) -> str:
+        """
+        Function specifically formatted for use as a tool call.
+        Returns the relevant content found in the knowledge base.
+        
+        Args:
+            query (str): The user's question
+            
+        Returns:
+            str: The relevant content found
+        """
+        print(f"\nSearching knowledge base for: {query}")
+        
+        # Get embeddings and search
+        print("Getting vector embeddings...")
+        chunks = self.search(query, top_k=3)
+        
+        if not chunks:
+            print("No relevant chunks found")
+            return "No relevant information found."
+        
+        print(f"Found {len(chunks)} relevant chunks")
+        
+        # Format the content with sources
+        content = []
+        for i, chunk in enumerate(chunks, 1):
+            print(f"Processing chunk {i} from article '{chunk['title']}'")
+            content.append(
+                f"From article '{chunk['title']}':\n"
+                f"{chunk['content']}\n"
+                f"Source: {chunk['url']}"
+            )
+        
+        final_content = "\n\n".join(content)
+        print("Finished processing knowledge base response")
+        return final_content 
