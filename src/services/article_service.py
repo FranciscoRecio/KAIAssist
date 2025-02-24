@@ -158,3 +158,78 @@ class KayakoArticleService:
         except Exception as e:
             print(f"Error fetching article {article_id}: {e}")
             raise 
+
+    def get_published_articles(self, offset: int = 0, limit: int = 10) -> List[Article]:
+        """
+        Fetch published articles from Kayako API
+        
+        Args:
+            offset (int): Starting point for pagination
+            limit (int): Number of articles to return per page
+            
+        Returns:
+            List of published Article objects
+        """
+        url = f"{self.base_url}/articles.json"
+        
+        params = {
+            'offset': offset,
+            'limit': limit
+        }
+        
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                headers=self.auth_service.get_auth_headers()
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            articles = []
+            for article_data in data.get('data', []):
+                # Only process published articles
+                if article_data.get('status') == "PUBLISHED":
+                    # Get title ID and content ID
+                    title_id = next((t['id'] for t in article_data.get('titles', []) 
+                                   if t.get('resource_type') == 'locale_field'), None)
+                    content_id = next((c['id'] for c in article_data.get('contents', [])
+                                     if c.get('resource_type') == 'locale_field'), None)
+                    
+                    # Fetch actual title and content
+                    title = self.get_locale_field(title_id) if title_id else None
+                    content = self.get_locale_field(content_id) if content_id else None
+                    
+                    articles.append(Article.from_api_response(article_data, title, content))
+            
+            return articles
+            
+        except Exception as e:
+            print(f"Error fetching published articles: {e}")
+            raise
+    
+    def get_all_published_articles(self) -> List[Article]:
+        """
+        Fetch all published articles by handling pagination automatically
+        
+        Returns:
+            List of all published Article objects
+        """
+        all_articles = []
+        offset = 0
+        limit = 100  # Fetch more articles per request
+        
+        while True:
+            articles = self.get_published_articles(offset=offset, limit=limit)
+            if not articles:
+                break
+                
+            all_articles.extend(articles)
+            
+            # Check if we got less than the limit (meaning we're at the end)
+            if len(articles) < limit:
+                break
+                
+            offset += limit
+            
+        return all_articles 
