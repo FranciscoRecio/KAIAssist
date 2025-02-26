@@ -133,7 +133,7 @@ class AudioStreamingService:
                             await openai_ws.send(json.dumps(audio_data))
                         elif data['event'] == 'start':
                             stream_sid = data['start']['streamSid']
-                            #print(f"Incoming stream has started {stream_sid}")
+                            #print(f"\nCall started - Stream ID: {stream_sid}")
                             response_start_timestamp_twilio = None
                             latest_media_timestamp = 0
                             last_assistant_item = None
@@ -145,8 +145,8 @@ class AudioStreamingService:
                                 # Get the conversation and create ticket
                                 conversation = self.conversation_service.get_conversation(stream_sid)
                                 if conversation and self.caller_number:
-                                    ticket_service = KayakoTicketService(KayakoAuthService())
-                                    ticket_service.make_ticket(conversation, self.caller_number)
+                                    # Mock ticket service for now
+                                    print(f"\nMocking ticket service with conversation and caller number: {self.caller_number}")
                                 self.conversation_service.save_conversation(stream_sid)
                             if openai_ws.open:
                                 await openai_ws.close()

@@ -25,7 +25,7 @@ class ToolService:
             print(f"Arguments: {function_args}")
             
             if function_name == 'end_call':
-                await self._handle_end_call(websocket, openai_ws)
+                await self._handle_end_call(websocket, openai_ws, stream_sid)
                 
             elif function_name == 'search_knowledge_base':
                 await self._handle_knowledge_base_search(function_args, call_id, openai_ws)
@@ -35,7 +35,7 @@ class ToolService:
             import traceback
             print(traceback.format_exc())
     
-    async def _handle_end_call(self, websocket: WebSocket, openai_ws: WebSocket) -> None:
+    async def _handle_end_call(self, websocket: WebSocket, openai_ws: WebSocket, stream_sid: str) -> None:
         """Handle the end_call function"""
         print("Ending call, thanks for calling")
         # Send final message before ending call
@@ -73,21 +73,11 @@ class ToolService:
         
         # Send tool response back to OpenAI
         tool_response = {
-            "type": "conversation.item.create",
-            "previous_item_id": None,
-            "item": {
-                "id": f"msg_{call_id}",
-                "type": "function_call_output",
-                "status": "completed",
-                "role": "system",
-                "call_id": call_id,
-                "content": {
-                    "call_id": call_id,
-                    "name": "search_knowledge_base",
-                    "arguments": function_args,
-                    "output": kb_response
-                }
+            "type": "response.create",
+            "response": {
+                "instructions": kb_response
             }
         }
+        
         print("Sending knowledge base response back to OpenAI")
         await openai_ws.send(json.dumps(tool_response)) 
