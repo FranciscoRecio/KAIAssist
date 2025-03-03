@@ -31,8 +31,19 @@ class ConversationService:
             conversation = self.active_conversations[stream_sid]
             print("\nFinal Conversation:")
             for message in conversation:
-                print(f"{message['role'].title()}: {message['content']}")
-                print(f"Timestamp: {message['timestamp']}\n")
+                # Check if this is a metadata entry
+                if 'metadata' in message:
+                    print(f"Metadata: {message['metadata']}")
+                    continue
+                
+                # Check if this is a regular message with role and content
+                if 'role' in message and 'content' in message:
+                    print(f"{message['role'].title()}: {message['content']}")
+                    if 'timestamp' in message:
+                        print(f"Timestamp: {message['timestamp']}\n")
+                else:
+                    # Handle other message formats
+                    print(f"Other message type: {message}")
             
             # Clean up the active conversation
             del self.active_conversations[stream_sid]
