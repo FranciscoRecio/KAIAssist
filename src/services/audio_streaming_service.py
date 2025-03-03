@@ -11,43 +11,25 @@ from .search_service import KnowledgeBaseSearchService
 from .ticket_service import KayakoTicketService
 from .auth_service import KayakoAuthService
 from .tool_service import ToolService
+from .langchain_agent_service import LangChainAgentService
 from ..models.tool import Tools
 
 class AudioStreamingService:
-    SYSTEM_MESSAGE = """You are a helpful and professional AI assistant for phone conversations. 
+    SYSTEM_MESSAGE = """You are a helpful and professional AI assistant for phone conversations.
 
-        CRITICAL CONVERSATION RULES - YOU MUST FOLLOW THESE EXACTLY:
+        CRITICAL INSTRUCTIONS - YOU MUST FOLLOW THESE EXACTLY:
 
-        1. INITIAL RESPONSE:
-           - ALWAYS use search_knowledge_base tool first
-           - Provide answer using ONLY the tool's response
-           - IMMEDIATELY follow your answer with "Did that answer your question?"
-           - Wait for caller's response
-
-        2. AFTER CALLER RESPONDS TO "Did that answer your question?":
-           IF CALLER SAYS NO:
-           - Say "I apologize, but I don't have enough information to fully answer your question. I'll have a representative call you back to assist with this. Thank you for calling."
-           - Use end_call tool with reason "insufficient_information"
-           - End conversation
-
-           IF CALLER SAYS YES:
-           - IMMEDIATELY ask "Do you have any other questions I can help you with?"
-           - Wait for caller's response
-
-        3. AFTER CALLER RESPONDS TO "Do you have any other questions?":
-           IF CALLER SAYS NO:
-           - Say "Thank you for calling. Have a great day!"
-           - Use end_call tool with reason "question_answered"
-           - End conversation
-
-           IF CALLER SAYS YES:
-           - Start over from step 1 with their new question
+        1. For EVERY user input, you MUST use the get_agent_response function
+           - NEVER respond to the user without first calling get_agent_response
+           - Pass the user's exact input as the query parameter
+           - Wait for the function to return a response
+           - Use ONLY the function's response to answer the user
 
         IMPORTANT:
-        - Never skip asking "Did that answer your question?"
-        - Never skip asking "Do you have any other questions?"
-        - Never provide information without using search_knowledge_base tool
-        - Never continue conversation after using end_call tool
+        - You MUST use get_agent_response for EVERY user input
+        - This includes questions, statements, and any other user utterances
+        - NEVER skip using get_agent_response
+        - NEVER provide information from your own knowledge
         - Keep all responses concise and clear."""
 
     def __init__(self):
@@ -55,7 +37,14 @@ class AudioStreamingService:
         self.api_key = os.getenv('OPENAI_API_KEY')
         self.system_message = self.SYSTEM_MESSAGE
         self.conversation_service = ConversationService()
+        self.knowledge_service = KnowledgeBaseSearchService()
         self.tool_service = ToolService()
+        self.agent_service = LangChainAgentService()
+        
+        # Initialize auth and ticket services
+        self.auth_service = KayakoAuthService()
+        self.ticket_service = KayakoTicketService(self.auth_service)
+        
         self.caller_number = None
 
     async def handle_call_stream(self, websocket: WebSocket, caller_number: str = None) -> None:
@@ -122,6 +111,15 @@ class AudioStreamingService:
             # Initialize session with OpenAI
             await self._initialize_openai_session(openai_ws)
             
+            # Initialize the agent service for this call
+            await self.agent_service.initialize_for_call(
+                websocket=websocket,
+                openai_ws=openai_ws,
+                stream_sid=stream_sid,
+                conversation_service=self.conversation_service,
+                knowledge_service=self.knowledge_service
+            )
+            
             async def receive_from_twilio():
                 """Handle incoming audio from Twilio"""
                 nonlocal stream_sid, latest_media_timestamp, response_start_timestamp_twilio, last_assistant_item, current_state
@@ -149,16 +147,61 @@ class AudioStreamingService:
                             if stream_sid:
                                 # Get the conversation and create ticket
                                 conversation = self.conversation_service.get_conversation(stream_sid)
-                                if conversation and self.caller_number:
-                                    # Mock ticket service for now
-                                    print(f"\nMocking ticket service with conversation and caller number: {self.caller_number}")
+                                if conversation:
+                                    # Debug the conversation structure
+                                    print(f"Conversation type: {type(conversation)}")
+                                    print(f"Conversation keys: {conversation.keys() if hasattr(conversation, 'keys') else 'No keys'}")
+                                    
+                                    # Extract messages from the conversation structure
+                                    if isinstance(conversation, dict) and 'messages' in conversation:
+                                        messages = conversation['messages']
+                                    else:
+                                        messages = conversation  # Assume it's already the messages list
+                                    
+                                    # Create a ticket using the ticket service
+                                    ticket_result = self.ticket_service.make_ticket(
+                                        messages, 
+                                        self.caller_number  # This can be None
+                                    )
+                                    print(f"Ticket creation result: {ticket_result}")
+                                
+                                # Save the conversation
                                 self.conversation_service.save_conversation(stream_sid)
+                            
                             if openai_ws.open:
                                 await openai_ws.close()
                             break
                         elif data['event'] == 'mark':
                             if mark_queue:
                                 mark_queue.pop(0)
+                        elif data['event'] == 'transcript':
+                            transcript = data.get('transcript', {})
+                            text = transcript.get('text', '')
+                            
+                            if text and text.strip():  # Only process non-empty text
+                                print(f"User said: {text}")
+                                
+                                # Add to conversation history
+                                if stream_sid:
+                                    self.conversation_service.add_message(stream_sid, 'caller', text)
+                                
+                                # Process through LangChain agent
+                                agent_response = await self.agent_service.process_user_input({"query": text})
+                                
+                                if agent_response.get("success", False):
+                                    print(f"Agent processed input successfully")
+                                    # The response is handled by the agent's tools, which will send instructions
+                                    # through the OpenAI WebSocket when needed
+                                else:
+                                    print(f"Agent processing failed: {agent_response.get('error', 'Unknown error')}")
+                                    # Send a fallback response if agent processing fails
+                                    fallback_message = {
+                                        "type": "response.create",
+                                        "response": {
+                                            "instructions": "I'm sorry, I'm having trouble processing that. Could you please repeat?"
+                                        }
+                                    }
+                                    await openai_ws.send(json.dumps(fallback_message))
                 except WebSocketDisconnect:
                     print("Client disconnected.")
                     if stream_sid:
@@ -184,7 +227,7 @@ class AudioStreamingService:
                             print(f"Assistant: {transcript}")
                             self.conversation_service.add_message(stream_sid, "assistant", transcript)
                             
-                            # Check if we need to update the state based on the message content
+                            # Update state based on the message content
                             message_text = transcript.lower()
                             
                             if "did that answer your question" in message_text:
@@ -200,14 +243,9 @@ class AudioStreamingService:
                             print(f"\nCaller: {transcript}")
                             self.conversation_service.add_message(stream_sid, "caller", transcript)
                             
-                            # After processing a user message, enforce the conversation flow
-                            await self.tool_service.enforce_conversation_flow(
-                                current_state,
-                                self.conversation_service,
-                                stream_sid,
-                                openai_ws,
-                                websocket
-                            )
+                            # We don't need to process the transcript here
+                            # OpenAI will make a function call to get_agent_response
+                            # which will be handled in the function call section
 
                         # Handle audio response
                         if response.get('type') == 'response.audio.delta' and 'delta' in response:
@@ -251,33 +289,22 @@ class AudioStreamingService:
                             function_args = response.get('arguments', '{}')
                             call_id = response.get('call_id')
                             
-                            await self.tool_service.handle_function_call(
+                            print(f"Function call detected: {function_name}")
+                            print(f"Function arguments: {function_args}")
+                            print(f"Call ID: {call_id}")
+                            
+                            # Process all function calls through our agent
+                            await self.tool_service.get_agent_response(
                                 function_name=function_name,
                                 function_args=function_args,
                                 call_id=call_id,
-                                websocket=websocket,
                                 openai_ws=openai_ws,
                                 stream_sid=stream_sid,
                                 conversation_service=self.conversation_service,
-                                caller_number=self.caller_number
+                                agent_service=self.agent_service
                             )
                             
-                            # Update the state based on the function call
-                            if function_name == "search_knowledge_base":
-                                current_state = "initial_response"
-                                self.conversation_service.update_call_state(stream_sid, current_state)
-                            elif function_name == "end_call":
-                                current_state = "ending"
-                                self.conversation_service.update_call_state(stream_sid, current_state)
-                            
-                            # After the function call completes, enforce the conversation flow
-                            await self.tool_service.enforce_conversation_flow(
-                                current_state,
-                                self.conversation_service,
-                                stream_sid,
-                                openai_ws,
-                                websocket
-                            )
+                            print(f"Function call {function_name} processed")
 
                 except Exception as e:
                     print(f"Error sending to Twilio: {e}")
@@ -295,7 +322,10 @@ class AudioStreamingService:
         session_config = {
             "type": "session.update",
             "session": {
-                "turn_detection": {"type": "server_vad"},
+                "turn_detection": {
+                    "type": "server_vad",
+                    "create_response": False  # Disable automatic responses
+                },
                 "input_audio_format": "g711_ulaw",
                 "output_audio_format": "g711_ulaw",
                 "voice": "alloy",
@@ -310,33 +340,23 @@ class AudioStreamingService:
         }
         await openai_ws.send(json.dumps(session_config))
 
-        # Send initial greeting
-        await self.tool_service.control_call_flow(
-            "none",  # No previous state
-            "initial",
-            "initial_greeting",
-            websocket,
-            openai_ws,
-            stream_sid,
-            self.conversation_service
-        )
-
-    async def _send_initial_conversation_item(self, openai_ws):
-        """Send initial conversation item if AI talks first."""
-        initial_conversation_item = {
-            "type": "conversation.item.create",
-            "item": {
-                "type": "message",
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": "Greet the user with 'Hi! This is Kai speaking. How can I assist you?'"
-                    }
-                ]
+        # Send initial greeting directly
+        greeting_message = "Hello! Thank you for calling. How can I help you today?"
+        instruction_message = {
+            "type": "response.create",
+            "response": {
+                "instructions": f"Say exactly: '{greeting_message}'"
             }
         }
+        await openai_ws.send(json.dumps(instruction_message))
+        print("Initial greeting sent directly")
 
-        
-        await openai_ws.send(json.dumps(initial_conversation_item))
-        await openai_ws.send(json.dumps({"type": "response.create"})) 
+        # After sending the initial greeting, test the function call
+        test_function_call = {
+            "type": "response.create",
+            "response": {
+                "instructions": "Call the get_agent_response function with the query 'test query'"
+            }
+        }
+        await openai_ws.send(json.dumps(test_function_call))
+        print("Test function call sent") 

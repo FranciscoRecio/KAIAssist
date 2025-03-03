@@ -59,8 +59,25 @@ class Tools:
         }
 
     @staticmethod
+    def get_agent_response() -> Dict[str, Any]:
+        return {
+            "type": "function",
+            "name": "get_agent_response",
+            "description": "Get a response from the AI agent for any user query",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The user's query or message to process through the AI agent"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+
+    @staticmethod
     def get_all_tools() -> List[Dict[str, Any]]:
         return [
-            Tools.search_knowledge_base(),
-            Tools.end_call()
+            Tools.get_agent_response()
         ] 

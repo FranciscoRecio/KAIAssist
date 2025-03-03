@@ -29,7 +29,7 @@ class ToolService:
                                  stream_sid: str,
                                  conversation_service,
                                  caller_number: str = None) -> None:
-        """Handle function calls from the OpenAI API"""
+        """Handle function calls from the OpenAI API or LangChain agent"""
         try:
             print(f"\nFunction called: {function_name}")
             print(f"Arguments: {function_args}")
@@ -322,3 +322,59 @@ class ToolService:
         
         await openai_ws.send(json.dumps(initial_conversation_item))
         await openai_ws.send(json.dumps({"type": "response.create"})) 
+
+    async def get_agent_response(self, function_name, function_args, call_id, openai_ws, stream_sid, conversation_service, agent_service):
+        """Process agent response for a function call"""
+        print(f"Getting agent response for function: {function_name}")
+        print(f"Arguments: {function_args}")
+        
+        try:
+            # Parse the function arguments
+            args = json.loads(function_args)
+            
+            if function_name == "get_agent_response":
+                query = args.get("query", "")
+                
+                # Check if this is a greeting or self-echo
+                greeting_phrases = ["hello", "hi", "hey", "greetings", "how can i help", "how may i help", "how can i assist"]
+                is_greeting = any(phrase in query.lower() for phrase in greeting_phrases)
+                
+                if is_greeting:
+                    print(f"Ignoring self-greeting: '{query}'")
+                    return
+                
+                # Process non-greeting queries through the LangChain agent
+                from langchain_core.messages import AIMessage, HumanMessage
+                
+                # Create proper agent_scratchpad as a list of base messages
+                agent_scratchpad = []
+                
+                # Get the response from the agent
+                await agent_service.process_user_input({
+                    "query": query,
+                    "agent_scratchpad": agent_scratchpad
+                })
+                
+            else:
+                print(f"Unknown function: {function_name}")
+        except Exception as e:
+            print(f"Error processing function call: {e}")
+            import traceback
+            print(traceback.format_exc())
+
+    async def initiate_greeting(self, openai_ws: WebSocket) -> None:
+        """Send an initial greeting to the caller"""
+        try:
+            greeting_message = "Hello! This is Kai speaking. How can I help you today?"
+            instruction_message = {
+                "type": "response.create",
+                "response": {
+                    "instructions": greeting_message
+                }
+            }
+            await openai_ws.send(json.dumps(instruction_message))
+            print("Initial greeting sent")
+        except Exception as e:
+            print(f"Error sending initial greeting: {e}")
+            import traceback
+            print(traceback.format_exc()) 
