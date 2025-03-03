@@ -55,6 +55,12 @@ class AudioStreamingService:
         self.api_key = os.getenv('OPENAI_API_KEY')
         self.system_message = self.SYSTEM_MESSAGE
         self.conversation_service = ConversationService()
+        
+        # Initialize auth service first
+        self.auth_service = KayakoAuthService()
+        
+        # Then initialize services that depend on it
+        self.ticket_service = KayakoTicketService(self.auth_service)
         self.tool_service = ToolService()
         self.caller_number = None
 
@@ -155,11 +161,15 @@ class AudioStreamingService:
                                 if conversation:
                                     # Process the conversation regardless of caller_number
                                     print(f"\nProcessing conversation data. Caller number: {self.caller_number or 'Unknown'}")
-                                    # Mock ticket service for now - we'll handle the None caller_number case
-                                    if self.caller_number:
-                                        print(f"Caller identified: {self.caller_number}")
+                                    
+                                    # Create a ticket from the conversation
+                                    print("Creating ticket from conversation...")
+                                    ticket = self.ticket_service.make_ticket(conversation, self.caller_number)
+                                    if ticket:
+                                        print(f"Ticket created: {ticket}")
                                     else:
-                                        print("Caller number not available")
+                                        print("Failed to create ticket")
+                                    
                                 self.conversation_service.save_conversation(stream_sid)
                             if openai_ws.open:
                                 await openai_ws.close()

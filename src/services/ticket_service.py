@@ -61,50 +61,49 @@ class KayakoTicketService:
             return None 
 
     def make_ticket(self, conversation: List[Dict], phone_number: str) -> Optional[Dict]:
-        """
-        Create a ticket from a conversation history and phone number
-        
-        Args:
-            conversation (List[Dict]): List of conversation messages with 'role' and 'content'
-            phone_number (str): The caller's phone number
-            
-        Returns:
-            Dict or None: The created ticket data if successful, None if failed
-        """
+        """Create a ticket from the conversation"""
         try:
-            # Format the conversation into a readable format
+            # Format the conversation into a readable format for the ticket
             formatted_conversation = []
-            for msg in conversation:
-                role = "Caller" if msg['role'] == 'caller' else "Assistant"
-                formatted_conversation.append(f"{role}: {msg['content']}")
+            for message in conversation:
+                if 'metadata' in message:
+                    continue  # Skip metadata entries
+                
+                if 'role' in message and 'content' in message:
+                    formatted_conversation.append(f"{message['role'].upper()}: {message['content']}")
             
-            conversation_text = "\n".join(formatted_conversation)
+            # Join the formatted messages with line breaks
+            contents = "\n\n".join(formatted_conversation)
             
-            # Create a descriptive subject from the first user message
-            user_messages = [msg['content'] for msg in conversation if msg['role'] == 'caller']
-            subject = user_messages[0] if user_messages else "Phone conversation ticket"
-            if len(subject) > 50:  # Truncate if too long
-                subject = subject[:47] + "..."
+            # Create a subject line from the first user message or a default
+            subject = "Call with AI Assistant"
+            for message in conversation:
+                if message.get('role') == 'caller' and 'content' in message:
+                    # Truncate long messages for the subject
+                    subject = f"Call about: {message['content'][:50]}"
+                    if len(message['content']) > 50:
+                        subject += "..."
+                    break
             
-            # Format the contents with conversation and metadata
-            contents = f"""Phone Call Conversation Log
-Caller Phone Number: {phone_number}
-Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-Conversation:
-{conversation_text}"""
-
-            # Create the ticket using default values
-            return self.create_ticket(
-                subject=subject,
-                contents=contents,
-                requester_id=344,  # Updated to valid requester ID
-                channel="MAIL",
-                channel_id=1,
-                priority_id=3,
-                type_id=1
-            )
+            # Add caller number to subject if available
+            if phone_number:
+                subject = f"{subject} - Caller: {phone_number}"
             
+            # Print the subject and contents for testing
+            print("\n==== TICKET INFORMATION ====")
+            print(f"SUBJECT: {subject}")
+            print("\nCONTENTS:")
+            print(contents)
+            print("==== END TICKET INFORMATION ====\n")
+            
+            # For testing, just return a mock ticket response instead of creating a real ticket
+            return {
+                "id": 12345,
+                "subject": subject,
+                "status": "TEST_TICKET - Not actually created"
+            }
         except Exception as e:
             print(f"Error creating ticket from conversation: {e}")
+            import traceback
+            print(traceback.format_exc())
             return None 
