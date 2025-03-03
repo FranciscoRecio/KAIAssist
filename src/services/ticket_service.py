@@ -2,11 +2,13 @@ from typing import Dict, Optional, List
 import requests
 from .auth_service import KayakoAuthService
 from datetime import datetime
+from .ticket_agent_service import TicketAgentService
 
 class KayakoTicketService:
     def __init__(self, auth_service: KayakoAuthService):
         self.auth_service = auth_service
         self.base_url = auth_service.base_url
+        self.ticket_agent = TicketAgentService()
     
     def create_ticket(self, 
                      subject: str,
@@ -63,31 +65,12 @@ class KayakoTicketService:
     def make_ticket(self, conversation: List[Dict], phone_number: str) -> Optional[Dict]:
         """Create a ticket from the conversation"""
         try:
-            # Format the conversation into a readable format for the ticket
-            formatted_conversation = []
-            for message in conversation:
-                if 'metadata' in message:
-                    continue  # Skip metadata entries
-                
-                if 'role' in message and 'content' in message:
-                    formatted_conversation.append(f"{message['role'].upper()}: {message['content']}")
+            # Use the ticket agent to process the conversation
+            ticket_data = self.ticket_agent.process_conversation(conversation, phone_number)
             
-            # Join the formatted messages with line breaks
-            contents = "\n\n".join(formatted_conversation)
-            
-            # Create a subject line from the first user message or a default
-            subject = "Call with AI Assistant"
-            for message in conversation:
-                if message.get('role') == 'caller' and 'content' in message:
-                    # Truncate long messages for the subject
-                    subject = f"Call about: {message['content'][:50]}"
-                    if len(message['content']) > 50:
-                        subject += "..."
-                    break
-            
-            # Add caller number to subject if available
-            if phone_number:
-                subject = f"{subject} - Caller: {phone_number}"
+            # Extract the subject and contents
+            subject = ticket_data.get('subject', 'Call with AI Assistant')
+            contents = ticket_data.get('contents', '')
             
             # Print the subject and contents for testing
             print("\n==== TICKET INFORMATION ====")
@@ -100,7 +83,8 @@ class KayakoTicketService:
             return {
                 "id": 12345,
                 "subject": subject,
-                "status": "TEST_TICKET - Not actually created"
+                "status": "TEST_TICKET - Not actually created",
+                "resolution_status": ticket_data.get('resolution_status')
             }
         except Exception as e:
             print(f"Error creating ticket from conversation: {e}")
