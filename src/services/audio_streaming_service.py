@@ -70,6 +70,9 @@ class AudioStreamingService:
         last_assistant_item = None
         mark_queue = []
         response_start_timestamp_twilio = None
+        response_in_progress = False
+        audio_playing = False
+        audio_chunks_received = 0  # Track number of audio chunks received
 
         # Initialize state before stream_sid is available
         current_state = "initial"
@@ -120,7 +123,7 @@ class AudioStreamingService:
             }
         ) as openai_ws:
             # Initialize session with OpenAI
-            await self._initialize_openai_session(openai_ws)
+            await self._initialize_openai_session(openai_ws, websocket, stream_sid)
             
             async def receive_from_twilio():
                 """Handle incoming audio from Twilio"""
@@ -149,9 +152,14 @@ class AudioStreamingService:
                             if stream_sid:
                                 # Get the conversation and create ticket
                                 conversation = self.conversation_service.get_conversation(stream_sid)
-                                if conversation and self.caller_number:
-                                    # Mock ticket service for now
-                                    print(f"\nMocking ticket service with conversation and caller number: {self.caller_number}")
+                                if conversation:
+                                    # Process the conversation regardless of caller_number
+                                    print(f"\nProcessing conversation data. Caller number: {self.caller_number or 'Unknown'}")
+                                    # Mock ticket service for now - we'll handle the None caller_number case
+                                    if self.caller_number:
+                                        print(f"Caller identified: {self.caller_number}")
+                                    else:
+                                        print("Caller number not available")
                                 self.conversation_service.save_conversation(stream_sid)
                             if openai_ws.open:
                                 await openai_ws.close()
@@ -170,19 +178,63 @@ class AudioStreamingService:
 
             async def send_to_twilio():
                 """Handle outgoing audio to Twilio"""
-                nonlocal stream_sid, last_assistant_item, response_start_timestamp_twilio, current_state
+                nonlocal stream_sid, last_assistant_item, response_start_timestamp_twilio, current_state, response_in_progress, audio_playing, audio_chunks_received
                 try:
                     async for message in openai_ws:
                         response = json.loads(message)
-                        #print(f"Received event type: {response.get('type')}")
+                        
+                        # Debug logging for all event types
+                        print(f"OpenAI event: {response.get('type')}")
+                        
                         if response.get('type') == 'error':
                             print(f"Error details: {json.dumps(response, indent=2)}")
+                        
+                        # Handle audio chunks
+                        if response.get('type') == 'response.audio.delta' and 'delta' in response:
+                            try:
+                                audio_playing = True
+                                audio_chunks_received += 1
+                                
+                                # Decode and re-encode the audio payload
+                                audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
+                                
+                                # Debug log for audio chunks
+                                print(f"Sending audio chunk #{audio_chunks_received} to Twilio")
+                                
+                                # Send the audio to Twilio
+                                await websocket.send_json({
+                                    "event": "media",
+                                    "streamSid": stream_sid,
+                                    "media": {
+                                        "payload": audio_payload
+                                    }
+                                })
+
+                                if response_start_timestamp_twilio is None:
+                                    response_start_timestamp_twilio = latest_media_timestamp
+
+                                if response.get('item_id'):
+                                    last_assistant_item = response['item_id']
+
+                                await send_mark()
+                            except Exception as e:
+                                print(f"Error sending audio to Twilio: {e}")
+                                import traceback
+                                print(traceback.format_exc())
+                        
+                        # Handle audio end
+                        if response.get('type') == 'response.audio.done':
+                            print(f"Audio response complete. Sent {audio_chunks_received} chunks.")
+                            audio_playing = False
+                            audio_chunks_received = 0
                         
                         # Handle assistant transcription
                         if response.get('type') == 'response.audio_transcript.done':
                             transcript = response.get('transcript', '')
                             print(f"Assistant: {transcript}")
                             self.conversation_service.add_message(stream_sid, "assistant", transcript)
+                            response_in_progress = False  # Response is complete
+                            audio_playing = False  # Audio is no longer playing
                             
                             # Check if we need to update the state based on the message content
                             message_text = transcript.lower()
@@ -194,6 +246,10 @@ class AudioStreamingService:
                                 current_state = "awaiting_more_questions"
                                 self.conversation_service.update_call_state(stream_sid, current_state)
 
+                        # Handle response start
+                        if response.get('type') == 'response.create.started':
+                            response_in_progress = True  # Response has started
+                        
                         # Handle caller transcription
                         if response.get('type') == 'conversation.item.input_audio_transcription.completed':
                             transcript = response.get('transcript', '')
@@ -201,55 +257,33 @@ class AudioStreamingService:
                             self.conversation_service.add_message(stream_sid, "caller", transcript)
                             
                             # After processing a user message, enforce the conversation flow
-                            await self.tool_service.enforce_conversation_flow(
-                                current_state,
-                                self.conversation_service,
-                                stream_sid,
-                                openai_ws,
-                                websocket
-                            )
+                            # Only if no response is currently in progress
+                            if not response_in_progress:
+                                await self.tool_service.enforce_conversation_flow(
+                                    current_state,
+                                    self.conversation_service,
+                                    stream_sid,
+                                    openai_ws,
+                                    websocket
+                                )
 
-                        # Handle audio response
-                        if response.get('type') == 'response.audio.delta' and 'delta' in response:
-                            audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
-                            await websocket.send_json({
-                                "event": "media",
-                                "streamSid": stream_sid,
-                                "media": {
-                                    "payload": audio_payload
-                                }
-                            })
-
-                            if response_start_timestamp_twilio is None:
-                                response_start_timestamp_twilio = latest_media_timestamp
-
-                            if response.get('item_id'):
-                                last_assistant_item = response['item_id']
-
-                            await send_mark()
-
-                        # Handle interruption when speech is detected
+                        # Handle interruption when speech is detected - ONLY if audio is actually playing
                         if response.get('type') == 'input_audio_buffer.speech_started':
-                            #print("Speech started detected.")
-                            if last_assistant_item:
-                                #print(f"Interrupting response with id: {last_assistant_item}")
+                            print("Speech started detected.")
+                            if audio_playing and last_assistant_item:
+                                print(f"Interrupting response with id: {last_assistant_item}")
                                 await handle_speech_started_event()
-                                # Add interruption handling through tool service
-                                if stream_sid and last_assistant_item:
-                                    elapsed_time = latest_media_timestamp - response_start_timestamp_twilio if response_start_timestamp_twilio else 0
-                                    await self.tool_service.handle_interruption(
-                                        websocket, 
-                                        openai_ws, 
-                                        stream_sid,
-                                        last_assistant_item,
-                                        elapsed_time
-                                    )
+                            else:
+                                print("Speech detected but no audio is playing - not treating as interruption")
 
                         # Handle function calls
                         if response.get('type') == 'response.function_call_arguments.done':
                             function_name = response.get('name')
                             function_args = response.get('arguments', '{}')
                             call_id = response.get('call_id')
+                            
+                            # Set response_in_progress to False before handling function call
+                            response_in_progress = False
                             
                             await self.tool_service.handle_function_call(
                                 function_name=function_name,
@@ -266,18 +300,22 @@ class AudioStreamingService:
                             if function_name == "search_knowledge_base":
                                 current_state = "initial_response"
                                 self.conversation_service.update_call_state(stream_sid, current_state)
+                                # Set response_in_progress to True after handling search_knowledge_base
+                                response_in_progress = True
                             elif function_name == "end_call":
                                 current_state = "ending"
                                 self.conversation_service.update_call_state(stream_sid, current_state)
                             
                             # After the function call completes, enforce the conversation flow
-                            await self.tool_service.enforce_conversation_flow(
-                                current_state,
-                                self.conversation_service,
-                                stream_sid,
-                                openai_ws,
-                                websocket
-                            )
+                            # Only if no response is currently in progress
+                            if not response_in_progress:
+                                await self.tool_service.enforce_conversation_flow(
+                                    current_state,
+                                    self.conversation_service,
+                                    stream_sid,
+                                    openai_ws,
+                                    websocket
+                                )
 
                 except Exception as e:
                     print(f"Error sending to Twilio: {e}")
@@ -290,7 +328,7 @@ class AudioStreamingService:
                 send_to_twilio()
             )
 
-    async def _initialize_openai_session(self, openai_ws):
+    async def _initialize_openai_session(self, openai_ws, websocket=None, stream_sid=None):
         """Initialize the OpenAI session with our preferences"""
         session_config = {
             "type": "session.update",
@@ -308,35 +346,33 @@ class AudioStreamingService:
                 "tools": Tools.get_all_tools()
             }
         }
+        
+        print('Sending session update')
         await openai_ws.send(json.dumps(session_config))
 
-        # Send initial greeting
-        await self.tool_service.control_call_flow(
-            "none",  # No previous state
-            "initial",
-            "initial_greeting",
-            websocket,
-            openai_ws,
-            stream_sid,
-            self.conversation_service
-        )
+        # Wait a moment for the session to initialize
+        await asyncio.sleep(2)
+        
+        print("Session initialized with audio output enabled")
+        
+        # Send initial greeting immediately after session initialization
+        await self._send_initial_conversation_item(openai_ws)
+        
+        # Update the state if we have a stream_sid
+        if stream_sid:
+            self.conversation_service.update_call_state(stream_sid, "initial")
 
     async def _send_initial_conversation_item(self, openai_ws):
         """Send initial conversation item if AI talks first."""
-        initial_conversation_item = {
-            "type": "conversation.item.create",
-            "item": {
-                "type": "message",
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": "Greet the user with 'Hi! This is Kai speaking. How can I assist you?'"
-                    }
-                ]
+        print("Sending initial conversation item")
+        
+        # Use a direct instruction instead of a conversation item
+        initial_instruction = {
+            "type": "response.create",
+            "response": {
+                "instructions": "Greet the user with 'Hi! This is Kai speaking. How can I assist you today?' Wait for the user to respond."
             }
         }
-
         
-        await openai_ws.send(json.dumps(initial_conversation_item))
-        await openai_ws.send(json.dumps({"type": "response.create"})) 
+        await openai_ws.send(json.dumps(initial_instruction))
+        print("Initial greeting instruction sent") 
