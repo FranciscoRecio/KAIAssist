@@ -72,20 +72,35 @@ class KayakoTicketService:
             subject = ticket_data.get('subject', 'Call with AI Assistant')
             contents = ticket_data.get('contents', '')
             
-            # Print the subject and contents for testing
+            # Print the subject and contents for debugging
             print("\n==== TICKET INFORMATION ====")
             print(f"SUBJECT: {subject}")
             print("\nCONTENTS:")
             print(contents)
             print("==== END TICKET INFORMATION ====\n")
             
-            # For testing, just return a mock ticket response instead of creating a real ticket
-            return {
-                "id": 12345,
-                "subject": subject,
-                "status": "TEST_TICKET - Not actually created",
-                "resolution_status": ticket_data.get('resolution_status')
-            }
+            # Create the actual ticket in Kayako
+            # We need to determine the requester_id - for now, use a default value
+            # In a real implementation, you would look up the user by phone number
+            requester_id = 344  # Default requester ID - replace with actual lookup
+            
+            # Create the ticket using the create_ticket method
+            created_ticket = self.create_ticket(
+                subject=subject,
+                contents=contents,
+                requester_id=requester_id,
+            )
+            
+            if created_ticket:
+                print(f"Successfully created ticket with ID: {created_ticket.get('id')}")
+                
+                # Add resolution status to the response
+                created_ticket['resolution_status'] = ticket_data.get('resolution_status')
+                return created_ticket
+            else:
+                print("Failed to create ticket in Kayako")
+                return None
+            
         except Exception as e:
             print(f"Error creating ticket from conversation: {e}")
             import traceback

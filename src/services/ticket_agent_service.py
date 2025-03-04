@@ -244,32 +244,69 @@ class TicketAgentService:
         resolution_match = re.search(r'Resolution Status:(.*?)(?=Summary:|Subject:|$)', output, re.IGNORECASE | re.DOTALL)
         resolution_status = resolution_match.group(1).strip() if resolution_match else None
         
-        # Format the ticket content
+        # Format the ticket content with better spacing and organization
         ticket_content = []
         
         # Add caller number if available
         if caller_number:
             ticket_content.append(f"Caller: {caller_number}")
+            ticket_content.append("")  # Add blank line
+            ticket_content.append("")  # Add another blank line
         
         # Add resolution status if available
         if resolution_status:
-            ticket_content.append(f"Resolution Status: {resolution_status}")
+            ticket_content.append("=== RESOLUTION STATUS ===")
+            ticket_content.append("")  # Add blank line
+            ticket_content.append(resolution_status)
+            ticket_content.append("")  # Add blank line
+            ticket_content.append("")  # Add another blank line
+            ticket_content.append("")  # Add a third blank line
         
-        # Add summary
+        # Add summary with proper formatting
         if summary:
-            ticket_content.append("\nConversation Summary:")
+            ticket_content.append("=== CONVERSATION SUMMARY ===")
+            ticket_content.append("")  # Add blank line
+            
+            # Format the summary with bullet points if it's not already formatted
+            if not any(line.strip().startswith('-') or line.strip().startswith('•') for line in summary.split('\n')):
+                # Split the summary into paragraphs and format each as a bullet point
+                formatted_summary = []
+                for paragraph in summary.split('\n\n'):
+                    if paragraph.strip():
+                        # Further split into sentences for better readability
+                        sentences = paragraph.split('. ')
+                        for sentence in sentences:
+                            if sentence.strip():
+                                formatted_summary.append(f"• {sentence.strip()}")
+                summary = '\n'.join(formatted_summary)
+            
             ticket_content.append(summary)
+            ticket_content.append("")  # Add blank line
+            ticket_content.append("")  # Add another blank line
+            ticket_content.append("")  # Add a third blank line
         
-        # Add full transcript
-        ticket_content.append("\n--- Full Transcript ---")
+        # Add full transcript with better formatting
+        ticket_content.append("=== FULL TRANSCRIPT ===")
+        ticket_content.append("")  # Add blank line
+        
+        # Format the transcript with clear speaker separation
         for msg in conversation:
             if 'metadata' in msg:
                 continue
             if 'role' in msg and 'content' in msg:
                 role = "Customer" if msg['role'] == 'caller' else "Support"
-                ticket_content.append(f"{role}: {msg['content']}")
+                ticket_content.append(f"{role}:")
+                ticket_content.append("")  # Add blank line after role
+                
+                # Indent the content for better readability
+                content_lines = msg['content'].split('\n')
+                for line in content_lines:
+                    ticket_content.append(f"    {line}")
+                
+                ticket_content.append("")  # Add blank line between messages
+                ticket_content.append("")  # Add another blank line between messages
         
-        # Join all content
+        # Join all content with proper line breaks
         contents = "\n".join(ticket_content)
         
         # Use the generated subject or a default

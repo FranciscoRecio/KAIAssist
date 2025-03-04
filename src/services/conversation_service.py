@@ -74,7 +74,7 @@ class ConversationService:
                 }
             })
         
-        print(f"Call state updated: {state}")
+        #print(f"Call state updated: {state}")
 
     def get_call_state(self, stream_sid: str) -> str:
         """Get the current state of the conversation"""

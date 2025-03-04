@@ -62,7 +62,7 @@ class AudioStreamingService:
         # Then initialize services that depend on it
         self.ticket_service = KayakoTicketService(self.auth_service)
         self.tool_service = ToolService()
-        self.caller_number = None
+        self.caller_number = "+1 (512) 749-1212"
 
     async def handle_call_stream(self, websocket: WebSocket, caller_number: str = None) -> None:
         """Handle WebSocket connections between Twilio and OpenAI"""
@@ -154,7 +154,7 @@ class AudioStreamingService:
                             self.conversation_service.start_conversation(stream_sid)
                             self.conversation_service.update_call_state(stream_sid, current_state)
                         elif data['event'] == 'stop':
-                            print("Call ended.")
+                            #print("Call ended.")
                             if stream_sid:
                                 # Get the conversation and create ticket
                                 conversation = self.conversation_service.get_conversation(stream_sid)
@@ -170,18 +170,22 @@ class AudioStreamingService:
                                     else:
                                         print("Failed to create ticket")
                                     
-                                self.conversation_service.save_conversation(stream_sid)
-                            if openai_ws.open:
-                                await openai_ws.close()
+                                #self.conversation_service.save_conversation(stream_sid)
+                            if openai_ws and hasattr(openai_ws, 'closed') and not openai_ws.closed:
+                                try:
+                                    await openai_ws.close(code=1000, reason="Call ended")
+                                    print("OpenAI WebSocket closed successfully")
+                                except Exception as e:
+                                    print(f"Error closing OpenAI WebSocket: {e}")
                             break
                         elif data['event'] == 'mark':
                             if mark_queue:
                                 mark_queue.pop(0)
                 except WebSocketDisconnect:
                     print("Client disconnected.")
-                    if stream_sid:
-                        self.conversation_service.save_conversation(stream_sid)
-                    if openai_ws.open:
+                    #if stream_sid:
+                        #self.conversation_service.save_conversation(stream_sid)
+                    if openai_ws and hasattr(openai_ws, 'closed') and not openai_ws.closed:
                         await openai_ws.close()
                 except Exception as e:
                     print(f"Error receiving from Twilio: {e}")
@@ -194,10 +198,11 @@ class AudioStreamingService:
                         response = json.loads(message)
                         
                         # Debug logging for all event types
-                        print(f"OpenAI event: {response.get('type')}")
+                        #print(f"OpenAI event: {response.get('type')}")
                         
                         if response.get('type') == 'error':
-                            print(f"Error details: {json.dumps(response, indent=2)}")
+                            #print(f"Error details: {json.dumps(response, indent=2)}")
+                            pass
                         
                         # Handle audio chunks
                         if response.get('type') == 'response.audio.delta' and 'delta' in response:
@@ -209,7 +214,7 @@ class AudioStreamingService:
                                 audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
                                 
                                 # Debug log for audio chunks
-                                print(f"Sending audio chunk #{audio_chunks_received} to Twilio")
+                                #print(f"Sending audio chunk #{audio_chunks_received} to Twilio")
                                 
                                 # Send the audio to Twilio
                                 await websocket.send_json({
@@ -234,7 +239,7 @@ class AudioStreamingService:
                         
                         # Handle audio end
                         if response.get('type') == 'response.audio.done':
-                            print(f"Audio response complete. Sent {audio_chunks_received} chunks.")
+                            #print(f"Audio response complete. Sent {audio_chunks_received} chunks.")
                             audio_playing = False
                             audio_chunks_received = 0
                         
@@ -279,12 +284,13 @@ class AudioStreamingService:
 
                         # Handle interruption when speech is detected - ONLY if audio is actually playing
                         if response.get('type') == 'input_audio_buffer.speech_started':
-                            print("Speech started detected.")
+                            #print("Speech started detected.")
                             if audio_playing and last_assistant_item:
                                 print(f"Interrupting response with id: {last_assistant_item}")
                                 await handle_speech_started_event()
                             else:
-                                print("Speech detected but no audio is playing - not treating as interruption")
+                                #print("Speech detected but no audio is playing - not treating as interruption")
+                                pass
 
                         # Handle function calls
                         if response.get('type') == 'response.function_call_arguments.done':
@@ -305,16 +311,6 @@ class AudioStreamingService:
                                 conversation_service=self.conversation_service,
                                 caller_number=self.caller_number
                             )
-                            
-                            # Update the state based on the function call
-                            if function_name == "search_knowledge_base":
-                                current_state = "initial_response"
-                                self.conversation_service.update_call_state(stream_sid, current_state)
-                                # Set response_in_progress to True after handling search_knowledge_base
-                                response_in_progress = True
-                            elif function_name == "end_call":
-                                current_state = "ending"
-                                self.conversation_service.update_call_state(stream_sid, current_state)
                             
                             # After the function call completes, enforce the conversation flow
                             # Only if no response is currently in progress
@@ -357,13 +353,13 @@ class AudioStreamingService:
             }
         }
         
-        print('Sending session update')
+        #print('Sending session update')
         await openai_ws.send(json.dumps(session_config))
 
         # Wait a moment for the session to initialize
-        await asyncio.sleep(2)
+        #await asyncio.sleep(2)
         
-        print("Session initialized with audio output enabled")
+        #print("Session initialized with audio output enabled")
         
         # Send initial greeting immediately after session initialization
         await self._send_initial_conversation_item(openai_ws)
@@ -374,7 +370,7 @@ class AudioStreamingService:
 
     async def _send_initial_conversation_item(self, openai_ws):
         """Send initial conversation item if AI talks first."""
-        print("Sending initial conversation item")
+        #print("Sending initial conversation item")
         
         # Use a direct instruction instead of a conversation item
         initial_instruction = {
@@ -385,4 +381,4 @@ class AudioStreamingService:
         }
         
         await openai_ws.send(json.dumps(initial_instruction))
-        print("Initial greeting instruction sent") 
+        #print("Initial greeting instruction sent") 

@@ -31,11 +31,11 @@ class ToolService:
                                  caller_number: str = None) -> None:
         """Handle function calls from the OpenAI API"""
         try:
-            print(f"\nFunction called: {function_name}")
-            print(f"Arguments: {function_args}")
+            #print(f"\nFunction called: {function_name}")
+            #print(f"Arguments: {function_args}")
             
             if function_name == 'end_call':
-                await self._handle_end_call(websocket, openai_ws, stream_sid, conversation_service)
+                await self._handle_end_call(websocket, openai_ws, stream_sid, conversation_service, function_args)
                 
             elif function_name == 'search_knowledge_base':
                 await self._handle_knowledge_base_search(function_args, call_id, openai_ws)
@@ -45,70 +45,66 @@ class ToolService:
             import traceback
             print(traceback.format_exc())
     
-    async def _handle_end_call(self, websocket: WebSocket, openai_ws: WebSocket, stream_sid: str, conversation_service=None) -> None:
+    async def _handle_end_call(self, websocket: WebSocket, openai_ws: WebSocket, stream_sid: str, conversation_service=None, function_args: str = None) -> None:
         """Handle the end_call function"""
-        print("Ending call, thanks for calling")
+        #print("Ending call, thanks for calling")
         
         # Add a check to prevent duplicate end_call handling
         if conversation_service:
             current_state = conversation_service.get_call_state(stream_sid)
-            if current_state == "ending":
-                print("Call already ending, skipping duplicate end_call")
+            # Check for all ending states
+            if current_state in ["ending", "ending_question_answered", "ending_insufficient_info"]:
+                #print(f"Call already in ending state: {current_state}, skipping duplicate end_call")
                 return
-            conversation_service.update_call_state(stream_sid, "ending")
+            
+            # Parse the function args to get the reason
+            reason = "normal"
+            if function_args:
+                try:
+                    args = json.loads(function_args)
+                    reason = args.get('reason', 'normal')
+                except:
+                    pass
+            
+            # Set the appropriate ending state based on the reason
+            if reason == "question_answered":
+                conversation_service.update_call_state(stream_sid, "ending_question_answered")
+                # Send a specific ending message for answered questions
+                await self._send_instruction(openai_ws, "Say: 'Thank you for calling. I'm glad I could help. Have a great day!'")
+            elif reason == "insufficient_information":
+                conversation_service.update_call_state(stream_sid, "ending_insufficient_info")
+                # Send a specific ending message for insufficient information
+                await self._send_instruction(openai_ws, "Say: 'I apologize, but I don't have enough information to fully answer your question. I'll have a representative call you back to assist with this. Thank you for calling.'")
+            else:
+                conversation_service.update_call_state(stream_sid, "ending")
+                # Send a generic ending message
+                await self._send_instruction(openai_ws, "Say: 'Thank you for calling. Have a great day!'")
         
         try:
-            # # Send final message before ending call using the format that works
-            # farewell_instruction = "Say: 'Thank you for calling Kayako. Have a great day!'"
-            
-            # # Use the response.create format that works for other messages
-            # farewell_response = {
-            #     "type": "response.create",
-            #     "response": {
-            #         "instructions": farewell_instruction
-            #     }
-            # }
-            
-            # # Send the message to OpenAI
-            # await openai_ws.send(json.dumps(farewell_response))
-            
             # Wait for the audio to be generated and sent
-            # This is more reliable than a fixed sleep
-            await asyncio.sleep(3)
+            # Increase the wait time to ensure the full message is spoken
+            await asyncio.sleep(6)
             
             # Send stop event to Twilio
-            print(f"Sending stop event for stream: {stream_sid}")
-            await websocket.send_json({
-                "event": "stop",
-                "streamSid": stream_sid
-            })
+            #print(f"Sending stop event for stream: {stream_sid}")
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "event": "stop",
+                        "streamSid": stream_sid
+                    })
+                    # Add a small delay to allow the stop event to be processed
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    print(f"Error sending stop event to Twilio: {e}")
             
-            # Close the OpenAI WebSocket connection
-            if openai_ws.open:
-                await openai_ws.close()
-            
-            print("Call ended successfully")
+            # NOTE: We no longer close the WebSocket connections here
+            # They will be closed in the 'stop' event handler
             
         except Exception as e:
             print(f"Error ending call: {e}")
             import traceback
             print(traceback.format_exc())
-            
-            # Attempt to close connections even if there was an error
-            try:
-                if websocket:
-                    await websocket.send_json({
-                        "event": "stop",
-                        "streamSid": stream_sid
-                    })
-            except:
-                pass
-            
-            try:
-                if openai_ws and openai_ws.open:
-                    await openai_ws.close()
-            except:
-                pass
     
     async def _handle_knowledge_base_search(self, function_args: str, call_id: str, openai_ws: WebSocket) -> None:
         """Handle the search_knowledge_base function with progress updates"""
@@ -126,7 +122,7 @@ class ToolService:
                 }
             }
             
-            print("Sending knowledge base response back to OpenAI")
+            #print("Sending knowledge base response back to OpenAI")
             await openai_ws.send(json.dumps(tool_response))
         except Exception as e:
             print(f"Error in knowledge base search: {e}")
@@ -142,7 +138,7 @@ class ToolService:
                                stream_sid: str,
                                conversation_service) -> None:
         """Control the flow of the call based on state transitions"""
-        print(f"Call flow transition: {current_state} -> {next_state}")
+        #print(f"Call flow transition: {current_state} -> {next_state}")
         
         # Handle state transitions
         if current_state == "none" and next_state == CallState.INITIAL:
@@ -175,7 +171,7 @@ class ToolService:
     async def _send_interim_message(self, openai_ws: WebSocket, message: str) -> None:
         """Send an interim message to the caller while processing"""
         try:
-            print(f"Sending interim message: {message}")
+            #print(f"Sending interim message: {message}")
             
             # Use the original format for sending interim messages
             interim_message = {
@@ -189,7 +185,7 @@ class ToolService:
             
             # Wait a moment to ensure the message is processed
             await asyncio.sleep(1)
-            print("Interim message sent")
+            #print("Interim message sent")
         except Exception as e:
             print(f"Error sending interim message: {e}")
             import traceback
@@ -198,7 +194,7 @@ class ToolService:
     async def _send_instruction(self, openai_ws: WebSocket, instruction: str) -> None:
         """Send an instruction to OpenAI"""
         try:
-            print(f"Sending instruction: {instruction}")
+            #print(f"Sending instruction: {instruction}")
             
             # Use the original format for sending instructions
             instruction_payload = {
@@ -250,7 +246,7 @@ class ToolService:
         
         # Check if we're in a state where we should avoid sending new instructions
         if current_state in ["ending", "ending_question_answered", "ending_insufficient_info"]:
-            print("Call is ending, skipping further instructions")
+            #print("Call is ending, skipping further instructions")
             return
         
         try:
@@ -270,51 +266,51 @@ class ToolService:
                     
                     # Check for positive responses
                     if any(word in user_message for word in ['yes', 'yeah', 'correct', 'right', 'good', 'helpful', 'thanks']):
-                        print("User indicated the answer was helpful, asking for more questions")
+                        #print("User indicated the answer was helpful, asking for more questions")
                         
                         # Update state first
                         conversation_service.update_call_state(stream_sid, "awaiting_more_questions")
                         
                         # Then send the instruction
-                        await self._send_instruction(openai_ws, "Ask: 'Do you have any other questions I can help you with?'")
+                        #await self._send_instruction(openai_ws, "Ask: 'Do you have any other questions I can help you with?'")
                         
                     # Check for negative responses
                     elif any(word in user_message for word in ['no', "didn't", 'not', 'nope']):
-                        print("User indicated the answer was not helpful, ending call")
+                        #print("User indicated the answer was not helpful, ending call")
                         
-                        # Update state first
-                        conversation_service.update_call_state(stream_sid, "ending_insufficient_info")
-                        
-                        # Then send the instruction with proper formatting
-                        instruction = "Say: 'I apologize, but I don't have enough information to fully answer your question. I'll have a representative call you back to assist with this. Thank you for calling.'"
-                        await self._send_instruction(openai_ws, instruction)
-                        
-                        # End the call without delay
-                        await self._handle_end_call(websocket, openai_ws, stream_sid, conversation_service)
+                        # End the call with insufficient_information reason
+                        await self._handle_end_call(
+                            websocket, 
+                            openai_ws, 
+                            stream_sid, 
+                            conversation_service, 
+                            json.dumps({"reason": "insufficient_information"})
+                        )
                     else:
                         # Ambiguous response, ask for clarification
-                        print("User response was ambiguous, asking for clarification")
+                        #print("User response was ambiguous, asking for clarification")
                         await self._send_instruction(openai_ws, "Ask again if the information answered their question.")
             
             elif current_state == "awaiting_more_questions":
                 # Check if user has more questions
+                #print("Checking for more questions")
                 if recent_messages and recent_messages[-1].get('role') == 'caller':
                     user_message = recent_messages[-1].get('content', '').lower()
                     
                     if any(word in user_message for word in ['no', 'nope', "that's all", 'nothing', 'done']):
-                        print("User has no more questions, ending call")
+                        #print("User has no more questions, ending call")
                         
-                        # Update state first
-                        conversation_service.update_call_state(stream_sid, "ending_question_answered")
-                        
-                        # Then send the instruction
-                        await self._send_instruction(openai_ws, "Say: 'Thank you for calling. Have a great day!'")
-                        
-                        # End the call without delay
-                        await self._handle_end_call(websocket, openai_ws, stream_sid, conversation_service)
+                        # End the call with question_answered reason
+                        await self._handle_end_call(
+                            websocket, 
+                            openai_ws, 
+                            stream_sid, 
+                            conversation_service, 
+                            json.dumps({"reason": "question_answered"})
+                        )
                     else:
                         # User has more questions, let the model handle it
-                        print("User has more questions, continuing conversation")
+                        #print("User has more questions, continuing conversation")
                         # Reset state to initial to handle the new question
                         conversation_service.update_call_state(stream_sid, "initial")
         except Exception as e:
@@ -325,7 +321,7 @@ class ToolService:
     async def _send_initial_greeting(self, openai_ws: WebSocket) -> None:
         """Send initial greeting to start the conversation."""
         try:
-            print("Sending initial greeting")
+            #print("Sending initial greeting")
             initial_conversation_item = {
                 "type": "conversation.item.create",
                 "item": {
@@ -342,7 +338,7 @@ class ToolService:
             
             await openai_ws.send(json.dumps(initial_conversation_item))
             await openai_ws.send(json.dumps({"type": "response.create"}))
-            print("Initial greeting sent")
+            #print("Initial greeting sent")
         except Exception as e:
             print(f"Error sending initial greeting: {e}")
             import traceback
@@ -351,7 +347,7 @@ class ToolService:
     async def _send_initial_greeting(self, openai_ws: WebSocket) -> None:
         """Send initial greeting to start the conversation."""
         try:
-            print("Sending initial greeting")
+            #print("Sending initial greeting")
             initial_conversation_item = {
                 "type": "conversation.item.create",
                 "item": {
@@ -368,7 +364,7 @@ class ToolService:
             
             await openai_ws.send(json.dumps(initial_conversation_item))
             await openai_ws.send(json.dumps({"type": "response.create"}))
-            print("Initial greeting sent")
+            #print("Initial greeting sent")
         except Exception as e:
             print(f"Error sending initial greeting: {e}")
             import traceback
